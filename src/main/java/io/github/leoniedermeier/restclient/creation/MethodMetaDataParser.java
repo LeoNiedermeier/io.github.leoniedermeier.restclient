@@ -1,4 +1,4 @@
-package io.github.leoniedermeier.restclient.annotation;
+package io.github.leoniedermeier.restclient.creation;
 
 import static feign.Util.checkState;
 import static feign.Util.emptyToNull;
@@ -23,7 +23,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 
-import io.github.leoniedermeier.restclient.annotation.MethodMetaData.ParameterDesciption.Type;
+import io.github.leoniedermeier.restclient.annotation.RestClient;
+import io.github.leoniedermeier.restclient.creation.MethodMetaData.ParameterDesciption.Type;
 
 public class MethodMetaDataParser {
     private static void checkAtMostOne(Method method, Object[] values, String fieldName) {
@@ -100,8 +101,8 @@ public class MethodMetaDataParser {
                 methodMetaData.getPathSegments().add(0, pathValue);
             }
             RestClient restClient = findMergedAnnotation(clz, RestClient.class);
-            Objects.requireNonNull(restClient, "Meldubng");
-            Objects.requireNonNull(restClient.url(), "Meldubng");
+            Objects.requireNonNull(restClient, "Meldung");
+            Objects.requireNonNull(restClient.url(), "Meldung");
             String url = resolve(restClient.url());
             methodMetaData.setUrl(url);
         }
@@ -121,23 +122,25 @@ public class MethodMetaDataParser {
 
     private void processMethodParametersAnnotations(MethodMetaData methodMetaData) {
         int parameters = methodMetaData.getMethod().getParameterCount();
-        for (int i = 0; i < parameters; i++) {
-            MethodParameter methodParameter = SynthesizingMethodParameter.forExecutable(methodMetaData.getMethod(), i);
+        for (int parameterIndex = 0; parameterIndex < parameters; parameterIndex++) {
+            MethodParameter methodParameter = SynthesizingMethodParameter.forExecutable(methodMetaData.getMethod(), parameterIndex);
             // TODO:
 //            methodParameter.nestedIfOptional()?
+            
             methodParameter.initParameterNameDiscovery(parameterNameDiscoverer);
             String parameterName = methodParameter.getParameterName();
 
             PathVariable pathVariable = methodParameter.getParameterAnnotation(PathVariable.class);
             if (pathVariable != null) {
                 String name = hasText(pathVariable.value()) ? pathVariable.value() : parameterName;
-                methodMetaData.addParameterDescription(name, i, Type.PathVariable);
+                methodMetaData.addParameterDescription(name, parameterIndex, Type.PathVariable);
             }
+            
 
             RequestParam requestParam = methodParameter.getParameterAnnotation(RequestParam.class);
             if (requestParam != null) {
                 String name = hasText(requestParam.value()) ? requestParam.value() : parameterName;
-                methodMetaData.addParameterDescription(name, i, Type.RequestParam);
+                methodMetaData.addParameterDescription(name, parameterIndex, Type.RequestParam);
             }
         }
 

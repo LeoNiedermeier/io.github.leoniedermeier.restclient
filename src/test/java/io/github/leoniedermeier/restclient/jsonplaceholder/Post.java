@@ -1,4 +1,4 @@
-package io.github.leoniedermeier.restclient.annotation.xyz;
+package io.github.leoniedermeier.restclient.jsonplaceholder;
 
 public class Post {
 
