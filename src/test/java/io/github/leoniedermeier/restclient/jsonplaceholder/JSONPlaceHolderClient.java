@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -23,5 +24,5 @@ public interface JSONPlaceHolderClient {
     
   //  https://jsonplaceholder.typicode.com/posts?userId=1
     @GetMapping(  value = "/posts")
-    List<Post> getPostsByUserId(@RequestParam String userId);
+    List<Post> getPostsByUserId(@RequestParam String userId, @RequestHeader("X-MY-HEADER") String header);
 }

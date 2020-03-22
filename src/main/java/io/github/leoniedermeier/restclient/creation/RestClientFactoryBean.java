@@ -1,7 +1,5 @@
 package io.github.leoniedermeier.restclient.creation;
 
-import static io.github.leoniedermeier.restclient.creation.MethodMetaData.ParameterDesciption.Type.PathVariable;
-import static io.github.leoniedermeier.restclient.creation.MethodMetaData.ParameterDesciption.Type.RequestParam;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
 import static org.springframework.core.annotation.AnnotatedElementUtils.hasAnnotation;
@@ -10,137 +8,104 @@ import static org.springframework.util.ReflectionUtils.getUniqueDeclaredMethods;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
-import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import org.aopalliance.intercept.MethodInterceptor;
 import org.aopalliance.intercept.MethodInvocation;
 import org.springframework.aop.framework.ProxyFactoryBean;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.context.EnvironmentAware;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.env.Environment;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.client.RestOperations;
-import org.springframework.web.util.UriComponentsBuilder;
 
 public class RestClientFactoryBean implements FactoryBean<Object>, EnvironmentAware {
 
-	static class MethodInvocationDispatcher implements MethodInterceptor {
-		private Map<Method, MethodInterceptor> methodToMethodInterceptor;
+    private static class MethodInvocationDispatcher implements MethodInterceptor {
 
-		public MethodInvocationDispatcher(Map<Method, MethodInterceptor> methodToMethodInterceptor) {
-			super();
-			this.methodToMethodInterceptor = methodToMethodInterceptor;
-		}
+        private final Map<Method, MethodMetaData> methodToMethodMetadata;
 
-		@Override
-		public Object invoke(MethodInvocation invocation) throws Throwable {
-			MethodInterceptor interceptor = methodToMethodInterceptor.get(invocation.getMethod());
-			if (interceptor == null) {
-				throw new IllegalStateException("");
-			}
-			return interceptor.invoke(invocation);
-		}
+        private final RestOperations restOperations;
 
-	}
+        public MethodInvocationDispatcher(RestOperations restOperations,
+                Map<Method, MethodMetaData> methodToMethodMetadata) {
+            super();
+            this.restOperations = restOperations;
+            this.methodToMethodMetadata = methodToMethodMetadata;
+        }
 
-	static class XyzMethodInterceptor implements MethodInterceptor {
+        @Override
+        public Object invoke(MethodInvocation invocation) throws Throwable {
+            MethodMetaData methodMetaData = methodToMethodMetadata.get(invocation.getMethod());
+            if (methodMetaData == null) {
+                throw new IllegalStateException("Missing MethodMetaData for method " + invocation.getMethod());
+            }
+            MethodInvoker methodInvoker = new MethodInvoker(restOperations, methodMetaData);
+            return methodInvoker.invoke(invocation);
+        }
+    }
 
-		private final MethodMetaData methodMetaData;
-		private final RestOperations restTemplate;
+    /**
+     * Get all methods in the supplied {@link Class class} and its superclasses
+     * which are annotated with the supplied {@code annotationType} but which are
+     * not <em>shadowed</em> by methods overridden in subclasses.
+     * <p>
+     * Default methods on interfaces are also detected.
+     * 
+     * @param clazz          the class for which to retrieve the annotated methods
+     * @param annotationType the annotation type for which to search
+     * @return all annotated methods in the supplied class and its superclasses as
+     *         well as annotated interface default methods
+     */
+    private static List<Method> getAnnotatedMethods(Class<?> clazz, Class<? extends Annotation> annotationType) {
+        return Arrays.stream(getUniqueDeclaredMethods(clazz, USER_DECLARED_METHODS))
+                .filter(method -> hasAnnotation(method, annotationType)).collect(toList());
+    }
 
-		public XyzMethodInterceptor(MethodMetaData methodMetaData, RestOperations restTemplate) {
-			super();
-			this.methodMetaData = methodMetaData;
-			this.restTemplate = restTemplate;
-		}
+    private Environment environment;
 
-		@Override
-		public Object invoke(MethodInvocation invocation) throws Throwable {
-			URI uriString = buildUriString(invocation);
-			HttpEntity<?> requestEntity = new HttpEntity<>(methodMetaData.getHeaders());
-			ParameterizedTypeReference<?> responseType = ParameterizedTypeReference
-					.forType(methodMetaData.getMethod().getGenericReturnType());
+    private RestOperations restOperations;
 
-			ResponseEntity<?> result = restTemplate.exchange(uriString, methodMetaData.getHttpMethod(), requestEntity,
-					responseType);
-			return result.getBody();
-		}
+    private Class<?> type;
 
-		private URI buildUriString(MethodInvocation invocation) {
-			UriComponentsBuilder uriComponentsBuilder = UriComponentsBuilder.fromHttpUrl(methodMetaData.getUrl());
+    private MethodInterceptor createAdvice() {
+        List<Method> methods = getAnnotatedMethods(type, RequestMapping.class);
 
-			methodMetaData.getPathSegments().forEach(uriComponentsBuilder::path);
+        MethodMetaDataParser parser = new MethodMetaDataParser(environment);
 
-			methodMetaData.getParameterDesciptions(RequestParam).forEach(
-					pd -> uriComponentsBuilder.queryParam(pd.getName(), invocation.getArguments()[pd.getIndex()]));
+        Map<Method, MethodMetaData> methodToMethodMetadata = methods.stream().map(parser::parse)
+                .collect(toMap(MethodMetaData::getMethod, Function.identity()));
 
-			Map<String, Object> uriVariables = methodMetaData.getParameterDesciptions(PathVariable).stream()
-					.collect(toMap(pd -> pd.getName(), pd -> invocation.getArguments()[pd.getIndex()]));
+        return new MethodInvocationDispatcher(restOperations, methodToMethodMetadata);
+    }
 
-			return uriComponentsBuilder.buildAndExpand(uriVariables).toUri();
+    @Override
+    public Object getObject() throws Exception {
+        ProxyFactoryBean pfb = new ProxyFactoryBean();
+        pfb.addInterface(type);
 
-		}
-	}
+        pfb.addAdvice(createAdvice());
+        return pfb.getObject();
+    }
 
-	/**
-	 * Get all methods in the supplied {@link Class class} and its superclasses
-	 * which are annotated with the supplied {@code annotationType} but which are
-	 * not <em>shadowed</em> by methods overridden in subclasses.
-	 * <p>
-	 * Default methods on interfaces are also detected.
-	 * 
-	 * @param clazz          the class for which to retrieve the annotated methods
-	 * @param annotationType the annotation type for which to search
-	 * @return all annotated methods in the supplied class and its superclasses as
-	 *         well as annotated interface default methods
-	 */
-	private static List<Method> getAnnotatedMethods(Class<?> clazz, Class<? extends Annotation> annotationType) {
-		return Arrays.stream(getUniqueDeclaredMethods(clazz, USER_DECLARED_METHODS))
-				.filter(method -> hasAnnotation(method, annotationType)).collect(toList());
-	}
+    @Override
+    public Class<?> getObjectType() {
+        return type;
+    }
 
-	private Environment environment;
+    @Override
+    public void setEnvironment(Environment environment) {
+        this.environment = environment;
+    }
 
-	private RestOperations restOperations;
+    public void setRestOperations(RestOperations restOperations) {
+        this.restOperations = restOperations;
+    }
 
-	private Class<?> type;
-
-	@Override
-	public Object getObject() throws Exception {
-		ProxyFactoryBean pfb = new ProxyFactoryBean();
-		pfb.addInterface(type);
-		List<Method> methods = getAnnotatedMethods(type, RequestMapping.class);
-
-		MethodMetaDataParser parser = new MethodMetaDataParser(environment);
-
-		Map<Method, MethodInterceptor> methodToMethodInterceptor = methods.stream().map(parser::parse)
-				.collect(toMap(MethodMetaData::getMethod, md -> new XyzMethodInterceptor(md, restOperations)));
-
-		pfb.addAdvice(new MethodInvocationDispatcher(methodToMethodInterceptor));
-		return pfb.getObject();
-	}
-
-	@Override
-	public Class<?> getObjectType() {
-		return type;
-	}
-
-	@Override
-	public void setEnvironment(Environment environment) {
-		this.environment = environment;
-	}
-
-	public void setRestOperations(RestOperations restOperations) {
-		this.restOperations = restOperations;
-	}
-
-	public void setType(Class<?> type) {
-		this.type = type;
-	}
+    public void setType(Class<?> type) {
+        this.type = type;
+    }
 }
